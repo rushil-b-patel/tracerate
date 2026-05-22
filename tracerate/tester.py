@@ -75,8 +75,7 @@ def download(
     """
     url = url.format(bytes=10**9)
     stop = threading.Event()
-    lock = threading.Lock()
-    total_bytes = 0
+    counters = [0] * streams  # per-thread byte counts, no lock needed
     measure_start: float | None = None
 
     client = httpx.Client(
@@ -86,8 +85,7 @@ def download(
         follow_redirects=True,
     )
 
-    def worker() -> None:
-        nonlocal total_bytes
+    def worker(idx: int) -> None:
         try:
             with client.stream("GET", url) as response:
                 response.raise_for_status()
@@ -96,34 +94,32 @@ def download(
                         return
                     if measure_start is None:
                         continue
-                    with lock:
-                        total_bytes += len(chunk)
+                    counters[idx] += len(chunk)
         except (httpx.HTTPError, OSError):
             return
 
     threads = [
-        threading.Thread(target=worker, daemon=True)
-        for _ in range(streams)
+        threading.Thread(target=worker, args=(i,), daemon=True)
+        for i in range(streams)
     ]
     for t in threads:
         t.start()
 
     time.sleep(warmup_s)
 
-    with lock:
-        total_bytes = 0
-        measure_start = time.perf_counter()
+    counters[:] = [0] * streams
+    measure_start = time.perf_counter()
 
     end_at = measure_start + duration_s
     while time.perf_counter() < end_at:
         if on_progress:
             elapsed_now = time.perf_counter() - measure_start
-            on_progress(total_bytes, elapsed_now)
+            on_progress(sum(counters), elapsed_now)
         time.sleep(0.1)
 
     stop.set()
     elapsed = time.perf_counter() - measure_start
-    bytes_transferred = total_bytes
+    bytes_transferred = sum(counters)
 
     for t in threads:
         t.join(timeout=2)
@@ -136,26 +132,71 @@ def download(
     return round(speed_mbps, 2)
 
 UPLOAD_MAX_BYTES = 25 * 1024 * 1024
+_UPLOAD_STREAMS = 4
 
-def upload(url: str, size_bytes: int) -> float:
+def upload(url: str, size_bytes: int, on_progress: Callable[[int, int], None] | None = None) -> float:
     """
-    Uploads random bytes of data to a server and measure speed in Mbps.
-    Caps payload at UPLOAD_MAX_BYTES so typical asymmetric links finish.
+    Uploads random bytes in parallel streams to better saturate asymmetric links.
+    Generates a small random chunk and repeats it rather than allocating size_bytes
+    of random data upfront.
 
     Returns: speed in Mbps, or 0.0 if it fails.
     """
     size_bytes = min(size_bytes, UPLOAD_MAX_BYTES)
-    data = os.urandom(size_bytes)
+    per_stream = size_bytes // _UPLOAD_STREAMS
+
+    chunk = os.urandom(min(per_stream, 1 << 20))
+    repeats, extra = divmod(per_stream, len(chunk))
+    payload = chunk * repeats + chunk[:extra]
+
     timeout = httpx.Timeout(connect=10.0, read=60.0, write=300.0, pool=10.0)
-    try:
-        start = time.perf_counter()
-        response = httpx.post(url, content=data, timeout=timeout, headers=REQUEST_HEADERS)
-        response.raise_for_status()
-        end = time.perf_counter()
-        elapsed_time = end - start
-        if elapsed_time == 0:
-            return 0.0
-        speed = (size_bytes * 8) / elapsed_time / 1_000_000
-        return round(speed, 2)
-    except (httpx.HTTPError, OSError):
+    sent_counters = [0] * _UPLOAD_STREAMS
+    successful = [0]
+    done = threading.Event()
+    lock = threading.Lock()
+    total = per_stream * _UPLOAD_STREAMS
+
+    def make_body(idx: int):
+        step = 64 * 1024
+        for offset in range(0, len(payload), step):
+            data = payload[offset:offset + step]
+            sent_counters[idx] += len(data)
+            yield data
+
+    def upload_one(idx: int) -> None:
+        try:
+            r = httpx.post(url, content=make_body(idx), timeout=timeout, headers=REQUEST_HEADERS)
+            r.raise_for_status()
+            with lock:
+                successful[0] += 1
+        except (httpx.HTTPError, OSError):
+            pass
+
+    def monitor() -> None:
+        while not done.is_set():
+            on_progress(sum(sent_counters), total)
+            time.sleep(0.1)
+
+    start = time.perf_counter()
+    threads = [threading.Thread(target=upload_one, args=(i,), daemon=True) for i in range(_UPLOAD_STREAMS)]
+    for t in threads:
+        t.start()
+
+    if on_progress:
+        m = threading.Thread(target=monitor, daemon=True)
+        m.start()
+
+    for t in threads:
+        t.join()
+
+    done.set()
+    elapsed = time.perf_counter() - start
+
+    if on_progress:
+        m.join(timeout=1)
+        on_progress(total, total)
+
+    if elapsed <= 0 or successful[0] == 0:
         return 0.0
+    total_bytes = per_stream * successful[0]
+    return round((total_bytes * 8) / elapsed / 1_000_000, 2)

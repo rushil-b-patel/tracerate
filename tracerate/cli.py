@@ -1,5 +1,8 @@
 import typer
 import json
+import time
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from rich.console import Console
 
 from tracerate.info import get_ip_info, measure_dns
@@ -21,6 +24,30 @@ from tracerate.bufferbloat import bufferbloat as measure_bufferbloat
 
 app = typer.Typer(help="tracerate - a no-nonsense CLI internet speed tester")
 console = Console()
+
+
+def run_upload(size_bytes: int, quiet: bool) -> float:
+    if quiet:
+        return upload(SERVER["upload_url"], size_bytes)
+
+    start = time.perf_counter()
+    with Progress(
+        TextColumn("  [dim]Uploading  [/dim]"),
+        BarColumn(bar_width=30, complete_style="cyan", finished_style="cyan"),
+        TextColumn("[bold]{task.fields[mbps]:>7.2f}[/bold] [dim]Mbps[/dim]"),
+        TextColumn("[dim]{task.fields[secs]:>4.1f}s[/dim]"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("ul", total=1000, mbps=0.0, secs=0.0)
+
+        def on_progress(sent: int, total: int) -> None:
+            elapsed = time.perf_counter() - start
+            mbps = (sent * 8) / elapsed / 1_000_000 if elapsed > 0 else 0.0
+            ratio = min(sent / total, 1.0) if total > 0 else 0.0
+            progress.update(task, completed=int(ratio * 1000), mbps=mbps, secs=elapsed)
+
+        return upload(SERVER["upload_url"], size_bytes, on_progress=on_progress)
 
 
 def run_download(duration_s: float, streams: int, quiet: bool) -> float:
@@ -68,20 +95,19 @@ def run(
             console.print("[bold]tracerate[/bold] [dim]· network diagnostics[/dim]")
             console.print()
 
-        with console.status("[dim]Looking up your ISP...[/dim]", spinner="dots"):
-            info = get_ip_info()
-            dns_ms = measure_dns(SERVER["host"])
-
-        with console.status("[dim]Measuring latency...[/dim]", spinner="dots"):
-            ping_ms, loss_pct, jitter_ms = ping(SERVER["host"], SERVER["port"])
+        test_start = time.time()
+        with console.status("[dim]Looking up your ISP and measuring latency...[/dim]", spinner="dots"):
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_info = ex.submit(lambda: (get_ip_info(), measure_dns(SERVER["host"])))
+                f_ping = ex.submit(lambda: ping(SERVER["host"], SERVER["port"]))
+                info, dns_ms = f_info.result()
+                ping_ms, loss_pct, jitter_ms = f_ping.result()
 
         download_mbps = run_download(duration_s, streams, quiet=(output == "json"))
 
         upload_mbps = None
         if test_upload:
-            upload_mb = UPLOAD_MAX_BYTES // (1024 * 1024)
-            with console.status(f"[dim]Uploading {upload_mb} MB...[/dim]", spinner="dots"):
-                upload_mbps = upload(SERVER["upload_url"], UPLOAD_MAX_BYTES)
+            upload_mbps = run_upload(UPLOAD_MAX_BYTES, quiet=(output == "json"))
 
         bufferbloat = None
         if test_extras:
@@ -93,6 +119,7 @@ def run(
             with console.status("[dim]Pinging regional servers...[/dim]", spinner="dots"):
                 regions = ping_regions()
 
+        test_duration = round(time.time() - test_start)
         result = {
             "name": SERVER["name"],
             "ping_ms": ping_ms,
@@ -115,7 +142,7 @@ def run(
             }, indent=2))
             return
 
-        render(info, dns_ms, result, bufferbloat, regions, summary)
+        render(info, dns_ms, result, bufferbloat, regions, summary, test_start, test_duration)
 
 
 _DIVIDER = "[dim]" + "─" * 56 + "[/dim]"
@@ -132,8 +159,8 @@ def section(title: str) -> None:
     console.print(f"  {_DIVIDER}")
 
 
-def render(info, dns_ms, r, bb, regions, summary):
-    render_connection(info, dns_ms)
+def render(info, dns_ms, r, bb, regions, summary, test_start: float, test_duration: int):
+    render_connection(info, dns_ms, test_start, test_duration)
     render_speed(r)
 
     if bb is not None:
@@ -145,7 +172,7 @@ def render(info, dns_ms, r, bb, regions, summary):
     render_verdict(summary["summary"])
 
 
-def render_connection(info: dict, dns_ms: float) -> None:
+def render_connection(info: dict, dns_ms: float, test_start: float, test_duration: int) -> None:
     isp       = info.get("isp")       or "unknown"
     asn       = info.get("asn")       or ""
     city      = info.get("city")      or "?"
@@ -156,10 +183,12 @@ def render_connection(info: dict, dns_ms: float) -> None:
 
     dns_color = "dim" if dns_ms < 50 else ("yellow" if dns_ms < 150 else "red")
     edge = f"Cloudflare [bold]{colo}[/bold]" + (f" [dim]({colo_city})[/dim]" if colo_city else "")
+    timestamp = datetime.fromtimestamp(test_start).strftime("%Y-%m-%d %H:%M:%S")
 
     console.print(f"  [dim]ISP    [/dim]  [bold]{isp}[/bold]   [dim]{asn}[/dim]")
     console.print(f"  [dim]Where  [/dim]  {city}, {country}  [dim]→[/dim]  {edge}")
     console.print(f"  [dim]IP     [/dim]  {ip}   [dim]·  DNS[/dim] [{dns_color}]{dns_ms} ms[/{dns_color}]")
+    console.print(f"  [dim]Tested [/dim]  [dim]{timestamp}   ·  {test_duration}s[/dim]")
     console.print()
 
 
@@ -174,11 +203,18 @@ def render_speed(r: dict) -> None:
 
     scale = max(dl, ul, 100.0)
 
-    console.print(f"   [dim]Download[/dim]  [cyan]{bar(dl, scale)}[/cyan]   [bold]{dl:>7.2f}[/bold] [dim]Mbps[/dim]")
-    if r.get("upload_mbps") is not None:
-        console.print(f"   [dim]Upload  [/dim]  [cyan]{bar(ul, scale)}[/cyan]   [bold]{ul:>7.2f}[/bold] [dim]Mbps[/dim]")
+    def fmt_speed(mbps: float) -> str:
+        if mbps >= 1000:
+            return f"[bold]{mbps / 1000:>7.2f}[/bold] [dim]Gbps[/dim]"
+        return f"[bold]{mbps:>7.2f}[/bold] [dim]Mbps[/dim]"
 
-    loss_part = f"[red]· {loss}% loss[/red]" if loss > 0 else "[dim]· 0% loss[/dim]"
+    console.print(f"   [dim]Download[/dim]  [cyan]{bar(dl, scale)}[/cyan]   {fmt_speed(dl)}")
+    if r.get("upload_mbps") is not None:
+        ratio = ul / dl if dl > 0 else 0.0
+        ratio_color = "green" if ratio >= 0.8 else ("yellow" if ratio >= 0.5 else "red")
+        ratio_str = f"   [dim]↑/↓[/dim] [{ratio_color}]{ratio:.2f}x[/{ratio_color}]"
+        console.print(f"   [dim]Upload  [/dim]  [cyan]{bar(ul, scale)}[/cyan]   {fmt_speed(ul)}{ratio_str}")
+    loss_part = f"[bold red]· {loss}% loss[/bold red]" if loss > 0 else "[green]· 0% loss[/green]"
     console.print(f"   [dim]Ping    [/dim]  [bold]{ping}[/bold] [dim]ms[/dim]   {loss_part}")
     console.print(f"   [dim]Jitter  [/dim]  [bold]{jitter}[/bold] [dim]ms[/dim]")
     console.print()
@@ -213,6 +249,10 @@ def render_regions(regions: list[dict]) -> None:
     ordered = sorted(regions, key=lambda r: r["ms"] if r["ms"] > 0 else 1e9)
     for r in ordered:
         ms = r["ms"]
+        name = r["city"]
+        city_part, _, region_part = name.partition(" (")
+        region_part = region_part.rstrip(")")
+
         if ms == 0:
             bar_str = "[dim]" + "▱" * 12 + "[/dim]"
             ms_str = "[dim]timeout[/dim]"
@@ -220,7 +260,9 @@ def render_regions(regions: list[dict]) -> None:
             color = "cyan" if ms < 80 else ("yellow" if ms < 180 else "red")
             bar_str = f"[{color}]{bar(ms, scale, width=12)}[/{color}]"
             ms_str = f"[bold]{ms:>6.0f}[/bold] [dim]ms[/dim]"
-        console.print(f"   [dim]{r['code']}[/dim]  {r['city']:<11}  {bar_str}   {ms_str}")
+        console.print(
+            f"   [dim]{r['code']}[/dim]  {city_part:<16}  [dim]{region_part:<14}[/dim]  {bar_str}  {ms_str}"
+        )
     console.print()
 
 
