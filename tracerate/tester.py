@@ -136,9 +136,8 @@ _UPLOAD_STREAMS = 4
 
 def upload(url: str, size_bytes: int, on_progress: Callable[[int, int], None] | None = None) -> float:
     """
-    Uploads random bytes in parallel streams to better saturate asymmetric links.
-    Generates a small random chunk and repeats it rather than allocating size_bytes
-    of random data upfront.
+    Uploads random bytes of data in parallel stream to saturate asymmetric links.
+    Generates a small random chunk and repeats it.
 
     Returns: speed in Mbps, or 0.0 if it fails.
     """
