@@ -27,6 +27,7 @@ console = Console()
 
 
 def run_upload(size_bytes: int, quiet: bool) -> float:
+    """Run the upload test with a live progress bar."""
     if quiet:
         return upload(SERVER["upload_url"], size_bytes)
 
@@ -97,10 +98,12 @@ def run(
 
         test_start = time.time()
         with console.status("[dim]Looking up your ISP and measuring latency...[/dim]", spinner="dots"):
-            with ThreadPoolExecutor(max_workers=2) as ex:
-                f_info = ex.submit(lambda: (get_ip_info(), measure_dns(SERVER["host"])))
-                f_ping = ex.submit(lambda: ping(SERVER["host"], SERVER["port"]))
-                info, dns_ms = f_info.result()
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                f_info = ex.submit(get_ip_info)
+                f_dns  = ex.submit(measure_dns, SERVER["host"])
+                f_ping = ex.submit(ping, SERVER["host"], SERVER["port"])
+                info = f_info.result()
+                dns_ms = f_dns.result()
                 ping_ms, loss_pct, jitter_ms = f_ping.result()
 
         download_mbps = run_download(duration_s, streams, quiet=(output == "json"))
@@ -135,6 +138,8 @@ def run(
             print(json.dumps({
                 "info": info,
                 "dns_ms": dns_ms,
+                "started_at": datetime.fromtimestamp(test_start).strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_s": test_duration,
                 "result": result,
                 "bufferbloat": bufferbloat,
                 "regions": regions,
@@ -211,8 +216,7 @@ def render_speed(r: dict) -> None:
     console.print(f"   [dim]Download[/dim]  [cyan]{bar(dl, scale)}[/cyan]   {fmt_speed(dl)}")
     if r.get("upload_mbps") is not None:
         ratio = ul / dl if dl > 0 else 0.0
-        ratio_color = "green" if ratio >= 0.8 else ("yellow" if ratio >= 0.5 else "red")
-        ratio_str = f"   [dim]↑/↓[/dim] [{ratio_color}]{ratio:.2f}x[/{ratio_color}]"
+        ratio_str = f"   [dim]↑/↓ {ratio:.2f}x[/dim]"
         console.print(f"   [dim]Upload  [/dim]  [cyan]{bar(ul, scale)}[/cyan]   {fmt_speed(ul)}{ratio_str}")
     loss_part = f"[bold red]· {loss}% loss[/bold red]" if loss > 0 else "[green]· 0% loss[/green]"
     console.print(f"   [dim]Ping    [/dim]  [bold]{ping}[/bold] [dim]ms[/dim]   {loss_part}")
