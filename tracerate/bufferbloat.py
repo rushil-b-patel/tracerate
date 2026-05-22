@@ -2,6 +2,7 @@ import threading
 import httpx
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from tracerate.tester import SERVER
 
@@ -36,11 +37,11 @@ def bufferbloat(duration: float = 5.0, attempts: int = 8) -> dict:
     sample ping repeatedly during the saturation, compare to idle.
     """
 
-    idle_samples = []
-    for _ in range(attempts):
-        ms = sample_ping(SERVER["host"], SERVER["port"])
-        if ms is not None:
-            idle_samples.append(ms)
+    with ThreadPoolExecutor(max_workers=attempts) as ex:
+        idle_samples = [
+            ms for ms in ex.map(lambda _: sample_ping(SERVER["host"], SERVER["port"]), range(attempts))
+            if ms is not None
+        ]
 
     if not idle_samples:
         return {"idle_ms": 0.0, "loaded_ms": 0.0, "delta_ms": 0.0, "grade": "?"}

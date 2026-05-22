@@ -1,6 +1,7 @@
 import httpx
 import time
 import socket
+from concurrent.futures import ThreadPoolExecutor
 
 
 def get_ip_info() -> dict:
@@ -22,25 +23,18 @@ def get_ip_info() -> dict:
         "colo_city": None,
     }
 
-    try:
-        response = httpx.get("https://ipinfo.io/json", timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        info["ip"] = data.get("ip")
-        info["city"] = data.get("city")
-        info["country"] = data.get("country")
-        org = data.get("org") or ""
-        if org.startswith("AS") and " " in org:
-            asn, _, name = org.partition(" ")
-            info["asn"] = asn
-            info["isp"] = name
-        elif org:
-            info["isp"] = org
-    except Exception:
-        pass
+    def _fetch_ipinfo():
+        try:
+            r = httpx.get("https://ipinfo.io/json", timeout=5)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {}
 
-    try:
-        response = httpx.get("https://speed.cloudflare.com/meta",
+    def _fetch_cf():
+        try:
+            r = httpx.get(
+                "https://speed.cloudflare.com/meta",
                 timeout=5,
                 headers={
                     "User-Agent": "Mozilla/5.0",
@@ -48,26 +42,44 @@ def get_ip_info() -> dict:
                     "Referer": "https://speed.cloudflare.com/",
                 },
             )
-        response.raise_for_status()
-        data = response.json()
-        colo = data.get("colo")
-        if isinstance(colo, dict):
-            info["colo"] = colo.get("iata")
-            info["colo_city"] = colo.get("city")
-        elif isinstance(colo, str):
-            info["colo"] = colo
-        if not info["isp"]:
-            info["isp"] = data.get("asOrganization")
-        if not info["asn"] and data.get("asn"):
-            info["asn"] = f"AS{data['asn']}"
-        if not info["city"]:
-            info["city"] = data.get("city")
-        if not info["country"]:
-            info["country"] = data.get("country")
-        if not info["ip"]:
-            info["ip"] = data.get("clientIp")
-    except Exception:
-        pass
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {}
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_ipinfo = ex.submit(_fetch_ipinfo)
+        f_cf = ex.submit(_fetch_cf)
+        ipinfo_data = f_ipinfo.result()
+        cf_data = f_cf.result()
+
+    info["ip"] = ipinfo_data.get("ip")
+    info["city"] = ipinfo_data.get("city")
+    info["country"] = ipinfo_data.get("country")
+    org = ipinfo_data.get("org") or ""
+    if org.startswith("AS") and " " in org:
+        asn, _, name = org.partition(" ")
+        info["asn"] = asn
+        info["isp"] = name
+    elif org:
+        info["isp"] = org
+
+    colo = cf_data.get("colo")
+    if isinstance(colo, dict):
+        info["colo"] = colo.get("iata")
+        info["colo_city"] = colo.get("city")
+    elif isinstance(colo, str):
+        info["colo"] = colo
+    if not info["isp"]:
+        info["isp"] = cf_data.get("asOrganization")
+    if not info["asn"] and cf_data.get("asn"):
+        info["asn"] = f"AS{cf_data['asn']}"
+    if not info["city"]:
+        info["city"] = cf_data.get("city")
+    if not info["country"]:
+        info["country"] = cf_data.get("country")
+    if not info["ip"]:
+        info["ip"] = cf_data.get("clientIp")
 
     return info
 
