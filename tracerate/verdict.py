@@ -17,7 +17,7 @@ def _issues(download, upload, ping, jitter, loss, bb_grade) -> list[str]:
         issues.append(f"Packet loss: {loss}%")
     if download < 25:
         issues.append(f"Low download: {download} Mbps")
-    if upload < 10:
+    if upload is not None and upload < 10:
         issues.append(f"Low upload: {upload} Mbps")
     if ping > 80:
         issues.append(f"High ping: {ping} ms")
@@ -29,7 +29,7 @@ def _issues(download, upload, ping, jitter, loss, bb_grade) -> list[str]:
 
 def analyze(result: dict, bufferbloat: dict | None = None) -> dict:
     download = result.get("download_mbps") or 0.0
-    upload = result.get("upload_mbps")     or 0.0
+    upload = result.get("upload_mbps")
     ping = result.get("ping_ms")           or 0.0
     jitter = result.get("jitter_ms")       or 0.0
     loss = result.get("packet_loss")       or 0.0
