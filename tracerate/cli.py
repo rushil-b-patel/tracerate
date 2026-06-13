@@ -177,7 +177,7 @@ def render(info, dns_ms, r, bb, regions, summary, test_start: float, test_durati
     render_verdict(summary["summary"])
 
 
-def render_connection(info: dict, dns_ms: float, test_start: float, test_duration: int) -> None:
+def render_connection(info: dict, dns_ms: float | None, test_start: float, test_duration: int) -> None:
     isp       = info.get("isp")       or "unknown"
     asn       = info.get("asn")       or ""
     city      = info.get("city")      or "?"
@@ -186,13 +186,17 @@ def render_connection(info: dict, dns_ms: float, test_start: float, test_duratio
     colo_city = info.get("colo_city")
     ip        = info.get("ip")        or "?"
 
-    dns_color = "dim" if dns_ms < 50 else ("yellow" if dns_ms < 150 else "red")
+    if dns_ms is None:
+        dns_segment = "[red]DNS failed[/red]"
+    else:
+        dns_color = "dim" if dns_ms < 50 else ("yellow" if dns_ms < 150 else "red")
+        dns_segment = f"[dim]·  DNS[/dim] [{dns_color}]{dns_ms} ms[/{dns_color}]"
     edge = f"Cloudflare [bold]{colo}[/bold]" + (f" [dim]({colo_city})[/dim]" if colo_city else "")
     timestamp = datetime.fromtimestamp(test_start).strftime("%Y-%m-%d %H:%M:%S")
 
     console.print(f"  [dim]ISP    [/dim]  [bold]{isp}[/bold]   [dim]{asn}[/dim]")
     console.print(f"  [dim]Where  [/dim]  {city}, {country}  [dim]→[/dim]  {edge}")
-    console.print(f"  [dim]IP     [/dim]  {ip}   [dim]·  DNS[/dim] [{dns_color}]{dns_ms} ms[/{dns_color}]")
+    console.print(f"  [dim]IP     [/dim]  {ip}   {dns_segment}")
     console.print(f"  [dim]Tested [/dim]  [dim]{timestamp}   ·  {test_duration}s[/dim]")
     console.print()
 
