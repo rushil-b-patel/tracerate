@@ -22,11 +22,26 @@ REQUEST_HEADERS = {
 
 def ping(host: str, port: int, attempts: int = 5):
     """
-    Measures latency and packet loss to the specified host and port using TCP ping.
+    Measures latency and a coarse TCP reachability proxy to the specified host
+    and port by performing `attempts` TCP connect() handshakes with a 3s timeout.
+
+    The "packet_loss" value here is NOT true packet loss. It is the TCP
+    connect-failure rate: the fraction of handshakes that did not complete
+    within the socket timeout. A lost SYN is not surfaced as a failure by the
+    TCP stack -- the kernel silently retransmits it (after the initial RTO,
+    typically >=1s, often 3s); if the retry succeeds within the socket
+    timeout the attempt is counted as a (latency-inflated) success, and only
+    if no retry succeeds within the timeout is the attempt counted as
+    "lost". Handshake SYN segments also carry no payload, so their queuing
+    behaviour differs from full-MSS data segments. Treat this number as a
+    coarse reachability proxy, not as a packet-loss measurement. The dict
+    key and 3-tuple shape are kept for backwards compatibility with
+    downstream consumers; see plan 009 for the real fix.
 
     Returns:
         average_latency (float): The average latency in milliseconds.
-        packet_loss (float): The percentage of packets lost.
+        packet_loss (float): TCP connect-failure rate (%) over `attempts`
+            handshakes -- a reachability proxy, not true packet loss.
         jitter (float): The jitter in milliseconds.
     """
 
