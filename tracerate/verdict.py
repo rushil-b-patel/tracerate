@@ -1,3 +1,12 @@
+_HEALTHY_SUMMARY = "Connection looks healthy."
+_LOW_BANDWIDTH_SUMMARY = "Low bandwidth, ISP speed is the bottleneck."
+
+_SUMMARY_TO_STATUS = {
+    _HEALTHY_SUMMARY: "healthy",
+    _LOW_BANDWIDTH_SUMMARY: "low_bandwidth",
+}
+
+
 def _diagnose(download, ping, jitter, loss, bufferbloat_delta) -> str:
     if loss > 5:
         return "Packet loss detected, connection is unstable."
@@ -8,8 +17,8 @@ def _diagnose(download, ping, jitter, loss, bufferbloat_delta) -> str:
     if jitter > 30:
         return "High jitter, connection is unstable."
     if download < 10:
-        return "Low bandwidth, ISP speed is the bottleneck."
-    return "Connection looks healthy."
+        return _LOW_BANDWIDTH_SUMMARY
+    return _HEALTHY_SUMMARY
 
 def _issues(download, upload, ping, jitter, loss, bb_grade) -> list[str]:
     issues = []
@@ -37,7 +46,11 @@ def analyze(result: dict, bufferbloat: dict | None = None) -> dict:
     delta = (bufferbloat or {}).get("delta_ms", 0.0)
     bb_grade = (bufferbloat or {}).get("grade", "?")
 
+    summary = _diagnose(download, ping, jitter, loss, delta)
+    status = _SUMMARY_TO_STATUS.get(summary, "problem")
+
     return {
-        "summary": _diagnose(download, ping, jitter, loss, delta),
+        "summary": summary,
+        "status": status,
         "issues": _issues(download, upload, ping, jitter, loss, bb_grade),
     }

@@ -174,7 +174,7 @@ def render(info, dns_ms, r, bb, regions, summary, test_start: float, test_durati
     if regions:
         render_regions(regions)
 
-    render_verdict(summary["summary"])
+    render_verdict(summary["status"], summary["summary"])
 
 
 def render_connection(info: dict, dns_ms: float | None, test_start: float, test_duration: int) -> None:
@@ -274,13 +274,13 @@ def render_regions(regions: list[dict]) -> None:
     console.print()
 
 
-def render_verdict(verdict: str) -> None:
-    if verdict == "Connection looks healthy.":
-        mark, color = "✔", "green"
-    elif verdict in ("Low bandwidth, ISP speed is the bottleneck.",):
-        mark, color = "⚠", "yellow"
-    else:
-        mark, color = "✘", "red"
+_STATUS_MARK_COLOR = {
+    "healthy": ("✔", "green"),
+    "low_bandwidth": ("⚠", "yellow"),
+}
 
-    console.print(f"  [{color}]{mark}[/{color}]  [bold]{verdict}[/bold]")
+
+def render_verdict(status: str, message: str) -> None:
+    mark, color = _STATUS_MARK_COLOR.get(status, ("✘", "red"))
+    console.print(f"  [{color}]{mark}[/{color}]  [bold]{message}[/bold]")
     console.print()
