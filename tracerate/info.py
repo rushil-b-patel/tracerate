@@ -84,9 +84,12 @@ def get_ip_info() -> dict:
     return info
 
 
-def measure_dns(hostname: str = "speed.cloudflare.com") -> float:
+def measure_dns(hostname: str = "speed.cloudflare.com") -> float | None:
     """
     DNS lookup time in ms via getaddrinfo.
+
+    Returns None on lookup failure so callers can distinguish failure from
+    a genuine sub-millisecond result (instead of overloading 0.0 as both).
     """
 
     try:
@@ -96,4 +99,4 @@ def measure_dns(hostname: str = "speed.cloudflare.com") -> float:
         elapsed = (end - start) * 1000
         return round(elapsed, 2)
     except socket.gaierror:
-        return 0.0
+        return None
