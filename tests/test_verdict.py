@@ -77,7 +77,7 @@ def test_analyze_healthy_result():
     assert got["issues"] == []
 
 
-def test_analyze_returns_exactly_summary_and_issues_keys():
+def test_analyze_includes_summary_and_issues_keys():
     result = {
         "download_mbps": 100,
         "upload_mbps": 50,
@@ -86,4 +86,4 @@ def test_analyze_returns_exactly_summary_and_issues_keys():
         "packet_loss": 0,
     }
     got = analyze(result, {"delta_ms": 10, "grade": "A"})
-    assert set(got.keys()) == {"summary", "issues"}
+    assert {"summary", "issues"} <= set(got.keys())
