@@ -222,7 +222,7 @@ def render_speed(r: dict) -> None:
         ratio = ul / dl if dl > 0 else 0.0
         ratio_str = f"   [dim]↑/↓ {ratio:.2f}x[/dim]"
         console.print(f"   [dim]Upload  [/dim]  [cyan]{bar(ul, scale)}[/cyan]   {fmt_speed(ul)}{ratio_str}")
-    loss_part = f"[bold red]· {loss}% loss[/bold red]" if loss > 0 else "[green]· 0% loss[/green]"
+    loss_part = f"[bold red]· {loss}% conn. fail[/bold red]" if loss > 0 else "[green]· 0% conn. fail[/green]"
     console.print(f"   [dim]Ping    [/dim]  [bold]{ping}[/bold] [dim]ms[/dim]   {loss_part}")
     console.print(f"   [dim]Jitter  [/dim]  [bold]{jitter}[/bold] [dim]ms[/dim]")
     console.print()
