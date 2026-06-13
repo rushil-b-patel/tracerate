@@ -24,3 +24,9 @@ repository = "https://github.com/rushil-b-patel/tracerate"
 
 [project.scripts]
 tracerate = "tracerate.cli:app"
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
