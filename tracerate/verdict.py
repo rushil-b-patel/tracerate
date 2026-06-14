@@ -8,6 +8,22 @@ _SUMMARY_TO_STATUS = {
 
 
 def _diagnose(download, ping, jitter, loss, bufferbloat_delta) -> str:
+    """Produce a short human-readable diagnosis of the connection.
+
+    Returns the first matching condition in priority order: packet loss,
+    severe bufferbloat, high latency, high jitter, low bandwidth; otherwise
+    a healthy summary.
+
+    Args:
+        download: Download speed in Mbps.
+        ping: Round-trip latency in ms.
+        jitter: Latency jitter in ms.
+        loss: Loss / TCP-connect-failure rate as a percentage.
+        bufferbloat_delta: Loaded-vs-idle latency delta in ms.
+
+    Returns:
+        A single English sentence summarising the dominant issue.
+    """
     if loss > 5:
         return "Packet loss detected, connection is unstable."
     if bufferbloat_delta > 200:
@@ -21,6 +37,21 @@ def _diagnose(download, ping, jitter, loss, bufferbloat_delta) -> str:
     return _HEALTHY_SUMMARY
 
 def _issues(download, upload, ping, jitter, loss, bb_grade) -> list[str]:
+    """List threshold-based issue strings for a single test result.
+
+    Args:
+        download: Download speed in Mbps.
+        upload: Upload speed in Mbps, or None if upload was not tested.
+        ping: Round-trip latency in ms.
+        jitter: Latency jitter in ms.
+        loss: Loss / TCP-connect-failure rate as a percentage.
+        bb_grade: Bufferbloat letter grade ("A+".."F" or "?").
+
+    Returns:
+        A list of human-readable issue strings; empty when nothing trips
+        a threshold. `upload=None` is treated as "not measured" and
+        contributes no issue.
+    """
     issues = []
     if loss > 5:
         issues.append(f"Packet loss: {loss}%")
@@ -37,6 +68,21 @@ def _issues(download, upload, ping, jitter, loss, bb_grade) -> list[str]:
     return issues
 
 def analyze(result: dict, bufferbloat: dict | None = None) -> dict:
+    """Build the diagnosis bundle shown after a speed test.
+
+    Args:
+        result: Speed-test dict with optional keys `download_mbps`,
+            `upload_mbps`, `ping_ms`, `jitter_ms`, `packet_loss`.
+        bufferbloat: Optional bufferbloat dict with keys `delta_ms`
+            and `grade`.
+
+    Returns:
+        A dict with keys:
+            summary (str): Single-sentence diagnosis.
+            status (str): One of "healthy", "low_bandwidth", "problem"
+                (drives the verdict line's mark/color in the renderer).
+            issues (list[str]): Threshold-based issue strings.
+    """
     download = result.get("download_mbps") or 0.0
     upload = result.get("upload_mbps")
     ping = result.get("ping_ms")           or 0.0

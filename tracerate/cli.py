@@ -178,6 +178,16 @@ def render(info, dns_ms, r, bb, regions, summary, test_start: float, test_durati
 
 
 def render_connection(info: dict, dns_ms: float | None, test_start: float, test_duration: int) -> None:
+    """Print the connection summary (ISP, location, edge PoP, IP, DNS, timestamp).
+
+    Args:
+        info: Dict from `info.get_ip_info` with optional keys `ip`, `isp`,
+            `asn`, `city`, `country`, `colo`, `colo_city`.
+        dns_ms: DNS lookup time in milliseconds, or None to render a red
+            "DNS failed" indicator instead of a value.
+        test_start: Test start time as a UNIX timestamp (for display).
+        test_duration: Total wall-clock duration of the test, in seconds.
+    """
     isp       = info.get("isp")       or "unknown"
     asn       = info.get("asn")       or ""
     city      = info.get("city")      or "?"
@@ -202,6 +212,14 @@ def render_connection(info: dict, dns_ms: float | None, test_start: float, test_
 
 
 def render_speed(r: dict) -> None:
+    """Print the speed section (download, upload, ratio, ping, jitter, loss).
+
+    Args:
+        r: Result dict with keys `download_mbps`, `upload_mbps` (may be
+            None when upload was skipped), `ping_ms`, `jitter_ms`,
+            `packet_loss`. The "loss" indicator labels the connect-
+            failure rate honestly as "conn. fail".
+    """
     section("Speed")
 
     dl = r.get("download_mbps") or 0.0
@@ -281,6 +299,13 @@ _STATUS_MARK_COLOR = {
 
 
 def render_verdict(status: str, message: str) -> None:
+    """Print the final verdict line: a status mark plus the diagnosis message.
+
+    Args:
+        status: One of "healthy" (✔ green), "low_bandwidth" (⚠ yellow),
+            or anything else (✘ red).
+        message: Human-readable diagnosis from `verdict.analyze`.
+    """
     mark, color = _STATUS_MARK_COLOR.get(status, ("✘", "red"))
     console.print(f"  [{color}]{mark}[/{color}]  [bold]{message}[/bold]")
     console.print()
