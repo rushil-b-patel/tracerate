@@ -85,11 +85,14 @@ def get_ip_info() -> dict:
 
 
 def measure_dns(hostname: str = "speed.cloudflare.com") -> float | None:
-    """
-    DNS lookup time in ms via getaddrinfo.
+    """Measure DNS resolution time for a hostname via `getaddrinfo`.
 
-    Returns None on lookup failure so callers can distinguish failure from
-    a genuine sub-millisecond result (instead of overloading 0.0 as both).
+    Args:
+        hostname: Name to resolve. Defaults to "speed.cloudflare.com".
+
+    Returns:
+        Lookup time in milliseconds on success, or None on resolution
+        failure (distinguishing failure from a genuine near-zero result).
     """
 
     try:

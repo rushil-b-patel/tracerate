@@ -15,12 +15,16 @@ _MAX_SATURATION_STREAMS = 6
 
 
 def _percentile(samples: list[float], pct: float) -> float:
-    """
-    Nearest-rank percentile of `samples` at `pct` in [0, 100].
+    """Compute the nearest-rank percentile of a numeric sample list.
 
-    Returns 0.0 for an empty list to match how callers treat "no samples".
-    For a single-element list, returns that element. p0 returns the min,
-    p100 returns the max.
+    Args:
+        samples: Numeric values (any order); not mutated.
+        pct: Percentile to extract, clamped to [0, 100]. p0 returns the
+            min, p100 returns the max.
+
+    Returns:
+        The selected sample value, or 0.0 if `samples` is empty (so
+        callers can treat "no samples" as a neutral zero).
     """
     if not samples:
         return 0.0
@@ -40,9 +44,13 @@ def _percentile(samples: list[float], pct: float) -> float:
 
 
 def _grade(delta: float) -> str:
-    """
-    Map loaded-vs-idle latency delta (ms) to a bufferbloat letter grade.
-    Thresholds are preserved verbatim from the original implementation.
+    """Convert a loaded-vs-idle latency delta into a bufferbloat letter grade.
+
+    Args:
+        delta: Latency increase under load, in milliseconds.
+
+    Returns:
+        One of "A+", "A", "B", "C", "D", "F" (lower delta is better).
     """
     if   delta < 5:    return "A+"
     elif delta < 30:   return "A"
@@ -53,15 +61,21 @@ def _grade(delta: float) -> str:
 
 
 def _saturate_workers(stop_flag: threading.Event, url: str, streams: int):
-    """
-    Start `streams` background daemon threads that each open an httpx stream
-    and discard bytes until `stop_flag` is set. Mirrors the multi-stream shape
-    used by tracerate.tester.download: one shared httpx.Client, N daemon
-    threads each running client.stream("GET", url) with iter_bytes, broad
-    `except (httpx.HTTPError, OSError)` resilience so a failed saturation
-    stream cannot crash the measurement.
+    """Spawn parallel HTTP download streams to saturate the link.
 
-    Returns (threads, client) so the caller can stop, join, and close cleanly.
+    Each worker streams bytes from `url` and discards them until
+    `stop_flag` is set; HTTP and OS errors are swallowed so a single
+    failing stream cannot crash the measurement.
+
+    Args:
+        stop_flag: Event the caller sets to signal workers to exit.
+        url: HTTP(S) URL to stream from.
+        streams: Number of parallel daemon threads to start.
+
+    Returns:
+        A `(threads, client)` tuple. The caller is responsible for
+        setting `stop_flag`, joining the threads, and closing the shared
+        `httpx.Client`.
     """
     client = httpx.Client(
         http2=False,
@@ -104,16 +118,26 @@ def sample_ping(host: str, port: int) -> float | None:
 
 
 def bufferbloat(duration: float = 5.0, attempts: int = 8, streams: int = 4) -> dict:
-    """
-    Saturate the link with `streams` parallel downloads in background threads,
-    sample TCP-connect latency repeatedly during the saturation, compare to idle.
+    """Measure bufferbloat by comparing idle and under-load TCP-connect latency.
 
-    Idle latency is `min(idle_samples)` (the right estimator for base RTT).
-    Loaded latency is the p90 of samples taken during saturation: bufferbloat
-    is about latency under load, so a min would systematically report the best
-    case and hide the queueing delay the metric exists to expose.
+    Samples ping latency to the configured server while a parallel
+    multi-stream download saturates the link, then compares the under-load
+    p90 against the idle min RTT to grade queueing delay.
 
-    Returns: {"idle_ms", "loaded_ms", "delta_ms", "grade"}.
+    Args:
+        duration: Seconds to sample under load (default 5.0).
+        attempts: Number of idle samples taken before saturation
+            (default 8).
+        streams: Parallel saturation streams; clamped to [1, 6]
+            (default 4).
+
+    Returns:
+        A dict with keys:
+            idle_ms (float): Best idle round-trip latency, in
+                milliseconds (`min(idle_samples)`).
+            loaded_ms (float): p90 round-trip latency under load.
+            delta_ms (float): `max(0.0, loaded_ms - idle_ms)`.
+            grade (str): Letter grade A+..F, or "?" if sampling failed.
     """
     # Clamp streams to the cap so callers can't accidentally make the probe
     # itself the bottleneck.
