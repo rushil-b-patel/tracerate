@@ -9,8 +9,9 @@ import httpx
 from tracerate.tester import SERVER, REQUEST_HEADERS
 
 
-# Cap saturation streams. Mirrors tester.download's streams=6 ceiling so the
-# probe itself does not become the bottleneck on slow links (see plan 003 §11).
+# Cap on parallel saturation streams. Beyond this the probe itself starts
+# competing for upstream bandwidth on slow links and skews the measurement;
+# matches the streams=6 ceiling used by the main download test.
 _MAX_SATURATION_STREAMS = 6
 
 
@@ -163,9 +164,10 @@ def bufferbloat(duration: float = 5.0, attempts: int = 8, streams: int = 4) -> d
     # Short warmup so streams ramp past TCP slow-start before we sample.
     time.sleep(0.3)
 
-    # NOTE: TCP-connect sampling under load has a known limitation -- a SYN
-    # retransmit can mask packet loss as latency. See plan 009 spike for a
-    # kernel tcp_info / netlink based replacement.
+    # TCP-connect sampling under load has a known limitation: a lost SYN is
+    # silently retransmitted by the kernel (after >=1s), so packet loss shows
+    # up as inflated latency rather than a missed sample. Reading the kernel
+    # tcp_info via getsockopt/netlink would be the accurate alternative.
     samples = []
     end_time = time.time() + duration
 
