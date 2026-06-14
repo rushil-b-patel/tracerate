@@ -8,9 +8,9 @@ version = "1.2.0"
 description = "A no-nonsense CLI internet speed tester"
 requires-python = ">=3.10"
 dependencies = [
-    "httpx",
-    "typer",
-    "rich",
+    "httpx>=0.28,<1.0",
+    "typer>=0.25,<1.0",
+    "rich>=15,<16",
 ]
 readme = "README.md"
 license = "MIT"
